@@ -20,6 +20,14 @@ const candidateSchema = new mongoose.Schema(
 
     resume: { type: String,  },
 
+    /** Used for job recommendations (comma-separated or saved from profile) */
+    skills: { type: [String], default: [] },
+
+    yearsOfExperience: { type: Number },
+
+    /** Short text from resume / bio — matched against JD text */
+    professionalSummary: { type: String, default: "" },
+
     avatar: { type: String },
 
     lastlogin: { type: Date },

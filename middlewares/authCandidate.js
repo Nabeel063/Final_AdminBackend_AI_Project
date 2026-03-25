@@ -7,12 +7,13 @@ import { config } from "../config/index.js";
 
 export const protectCandidate = asyncHandler(async (req, res, next) => {
   let token;
-
-  if (req.headers.authorization?.startsWith("Bearer")) {
-    token = req.headers.authorization.split(" ")[1];
+  const authHeader = req.headers.authorization?.trim();
+  const bearerMatch = authHeader && /^Bearer\s+(.+)$/i.exec(authHeader);
+  if (bearerMatch) {
+    token = bearerMatch[1].trim().split(/\s+/)[0];
   }
 
-  if (!token) {
+  if (!token || token === "null" || token === "undefined") {
     return next(new errorResponse("Candidate token missing", 401));
   }
 

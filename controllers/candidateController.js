@@ -6,10 +6,10 @@ export const getCandidateProfile = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, candidate });
 });
 
-// Update candidate profile (only phone and resume)
+// Update candidate profile (phone, resume file, skills, experience, summary)
 export const updateCandidateProfile = asyncHandler(async (req, res, next) => {
   const candidateId = req.candidate._id;
-  const { phone } = req.body;
+  const { phone, skills, yearsOfExperience, professionalSummary } = req.body;
   let resumeUrl = null;
   if (req.file) {
     const uploadResult = await uploadBuffer(req.file.buffer, "candidates");
@@ -18,8 +18,29 @@ export const updateCandidateProfile = asyncHandler(async (req, res, next) => {
   const updateFields = {};
   if (phone) updateFields.phone = phone;
   if (resumeUrl) updateFields.resume = resumeUrl;
-  const candidate = await Candidate.findByIdAndUpdate(candidateId, updateFields, { new: true, runValidators: true }).select('-password');
-  if (!candidate) return next(new errorResponse('Candidate not found', 404));
+  if (skills !== undefined) updateFields.skills = parseSkillsFromBody(skills);
+  if (yearsOfExperience !== undefined) {
+    const raw = String(yearsOfExperience).trim();
+    if (raw === "") updateFields.yearsOfExperience = null;
+    else {
+      const y = Number(raw);
+      if (!Number.isNaN(y)) updateFields.yearsOfExperience = y;
+    }
+  }
+  if (professionalSummary !== undefined) {
+    updateFields.professionalSummary = String(professionalSummary || "").trim();
+  }
+
+  let candidate;
+  if (Object.keys(updateFields).length > 0) {
+    candidate = await Candidate.findByIdAndUpdate(candidateId, updateFields, {
+      new: true,
+      runValidators: true,
+    }).select("-password");
+  } else {
+    candidate = await Candidate.findById(candidateId).select("-password");
+  }
+  if (!candidate) return next(new errorResponse("Candidate not found", 404));
   res.status(200).json({ success: true, candidate });
 });
 import Candidate from "../models/candidate.js";
@@ -38,6 +59,15 @@ import errorResponse from "../utils/errorResponse.js";
 import cloudinary, { uploadBuffer } from "../utils/cloudinary.js";
 import jwt from "jsonwebtoken";
 import { config } from "../config/index.js";
+import { parseSkillsFromBody } from "../utils/candidateJobMatch.js";
+import {
+  buildResumeCompositeText,
+  getCachedOrExtractProfile,
+  rankJobsForCandidate,
+  mapJdToFrontendCard,
+  normalizeJdOfferForRanking,
+  calculateMatchScore,
+} from "../utils/resumeJobRecommendation.js";
 
 // Register candidate
 export const registerCandidate = asyncHandler(async (req, res, next) => {
@@ -513,56 +543,138 @@ export const getCandidateJdCounts = asyncHandler(async (req, res, next) => {
   }
 });
 
-export const getjobrecommendationsForCandidate = asyncHandler(async (req, res, next) => {
+/**
+ * GET /api/candidate/me/job-recommendations  (uses JWT only — preferred for UI)
+ * GET /api/candidate/recommend-jobs  (legacy)
+ * GET /api/candidate/recommend-jobs/:candidateId  (must equal JWT user)
+ * GET /api/candidate/:mongoObjectId  (HR `protect` only if param is a valid ObjectId; literals like recommend-jobs never hit User JWT)
+ * Resume-aware matching: skills (50%) + experience (30%) + TF‑IDF cosine vs JD (20%).
+ * Returns up to 8 best matches; prefers jobs ≥ 50% when any exist.
+ */
+export const recommendJobsForCandidate = asyncHandler(async (req, res, next) => {
   try {
-    const candidateId = req.candidate._id;
+    const paramId = req.params.candidateId;
+    if (paramId != null && String(paramId) !== String(req.candidate._id)) {
+      return next(new errorResponse("Forbidden", 403));
+    }
 
-    const candidate = await Candidate.findById(candidateId);
+    const candidateId = req.candidate._id;
+    const candidate = await Candidate.findById(candidateId).select("-password").lean();
     if (!candidate) {
       return next(new errorResponse("Candidate not found", 404));
     }
 
-    // Ensure fields are arrays or null
-    const skills = Array.isArray(candidate.skills) ? candidate.skills : [];
-    const preferredLocations = Array.isArray(candidate.preferredLocations)
-      ? candidate.preferredLocations
-      : [];
+    const composite = buildResumeCompositeText(candidate);
+    const hasSignals =
+      String(composite).trim().length >= 2 ||
+      (Array.isArray(candidate.skills) && candidate.skills.length > 0) ||
+      (candidate.yearsOfExperience != null && !Number.isNaN(Number(candidate.yearsOfExperience))) ||
+      (candidate.resume && String(candidate.resume).trim().length > 0) ||
+      (candidate.professionalSummary && String(candidate.professionalSummary).trim().length > 0);
 
-    const currentTitle = candidate.currentTitle || "";
-
-    // Build dynamic OR conditions safely
-    const conditions = []; 
-
-    if (skills.length > 0) {
-      conditions.push({ skills: { $in: skills } });
-    }
-
-    if (preferredLocations.length > 0) { 
-      conditions.push({ location: { $in: preferredLocations } });
-    }
-
-    if (currentTitle.trim() !== "") {
-      conditions.push({ title: { $regex: currentTitle, $options: "i" } });
-    }
-
-    // If no conditions found → return empty list
-    if (conditions.length === 0) {
+    if (!hasSignals) {
       return res.status(200).json({
         success: true,
-        data: [],
-        message: "No recommendation criteria found for this candidate."
+        candidateId: String(candidateId),
+        resumeInsights: null,
+        recommendedJobs: [],
+        message:
+          "Add skills, a professional summary, or upload a resume in your profile to get personalized recommendations.",
       });
     }
 
-    const jds = await JD.find({
-      $or: conditions
-    }).limit(10);
+    const profile = getCachedOrExtractProfile(candidate);
+
+    const now = new Date();
+    const dueCutoff = new Date(now);
+    dueCutoff.setUTCDate(dueCutoff.getUTCDate() - 30);
+
+    const agg = await JD.aggregate([
+      {
+        $lookup: {
+          from: "offers",
+          localField: "offerId",
+          foreignField: "_id",
+          as: "offerObj",
+        },
+      },
+      { $unwind: "$offerObj" },
+      {
+        $match: {
+          "offerObj.dueDate": { $gte: dueCutoff },
+        },
+      },
+    ]);
+
+    const populated = await JD.populate(agg, [
+      { path: "createdBy", select: "name email" },
+      { path: "offerId" },
+    ]);
+
+    const normalized = populated.map((jd) => normalizeJdOfferForRanking(jd));
+
+    const notApplied = normalized.filter(
+      (jd) =>
+        !(jd.appliedCandidates || []).some(
+          (ac) => ac.candidate && String(ac.candidate) === String(candidateId)
+        )
+    );
+
+    let ranked = rankJobsForCandidate(profile, notApplied, {
+      minMatchPreferred: 50,
+      minMatchFloor: 0,
+      limit: 8,
+    });
+
+    if (ranked.length === 0 && notApplied.length > 0) {
+      ranked = notApplied.slice(0, 8).map((jd) => {
+        const jdN = normalizeJdOfferForRanking(jd);
+        const offer = jdN.offerId;
+        const rec = offer
+          ? calculateMatchScore(profile, jdN, offer)
+          : {
+              matchPercentage: 15,
+              skillScore: 0,
+              experienceScore: 0.5,
+              similarityScore: 0,
+              matchedSkills: [],
+              missingSkills: [],
+              experienceMatch: false,
+              reason: "Open role — add skills to your profile for a stronger match score",
+            };
+        return { jd: jdN, rec };
+      });
+    }
+
+    const recommendedJobs = ranked.map(({ jd, rec }) => {
+      const offer = jd.offerId || {};
+      const card = mapJdToFrontendCard(jd, rec);
+      return {
+        jobTitle: offer.jobTitle || jd.jobSummary || "Job Opening",
+        jdId: String(jd._id),
+        matchPercentage: rec.matchPercentage,
+        matchedSkills: rec.matchedSkills,
+        missingSkills: rec.missingSkills,
+        experienceMatch: rec.experienceMatch,
+        reason: rec.reason,
+        companyName: card.company,
+        mappedJob: card,
+      };
+    });
 
     res.status(200).json({
       success: true,
-      data: jds
+      candidateId: String(candidateId),
+      resumeInsights: {
+        skills: profile.skills,
+        experienceYears: profile.experienceYears,
+        roles: profile.roles,
+        projects: profile.projects,
+        technologies: profile.technologies,
+        domains: profile.domains,
+      },
+      recommendedJobs,
     });
-
   } catch (err) {
     return next(
       new errorResponse(err.message || "Failed to fetch job recommendations", 500)
