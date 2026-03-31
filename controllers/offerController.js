@@ -595,3 +595,25 @@ export const suggestSkills = asyncHandler(async (req, res, next) => {
   }
   res.status(200).json({ success: true, skills: result.skills });
 });
+
+export const updateRmgProfile = asyncHandler(async (req, res, next) => {
+  try {
+    const rmgId = req.params.id;
+    const updates = req.body;
+    
+    const rmgUser = await User.findOneAndUpdate(
+      { _id: rmgId, role: 'RMG' },
+      updates,
+      { new: true }
+    ).select('-password');
+    
+    if (!rmgUser) {
+      return next(new ErrorResponse('RMG user not found', 404));
+    }
+    
+    res.status(200).json({ success: true, message: 'RMG updated', data: rmgUser });
+  }
+  catch (err) {
+    return next(new ErrorResponse(err.message || 'Failed to update RMG', 500));
+  }
+});

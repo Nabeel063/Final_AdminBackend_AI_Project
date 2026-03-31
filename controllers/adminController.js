@@ -112,17 +112,17 @@ export const updateRmg = asyncHandler(async (req, res, next) => {
   try {
     const rmgId = req.params.id;
     const updates = req.body;
-    
+
     const rmgUser = await User.findOneAndUpdate(
       { _id: rmgId, role: 'RMG' },
       updates,
       { new: true }
     ).select('-password');
-    
+
     if (!rmgUser) {
       return next(new ErrorResponse('RMG user not found', 404));
     }
-    
+
     res.status(200).json({ success: true, message: 'RMG updated', data: rmgUser });
   }
   catch (err) {
@@ -130,18 +130,40 @@ export const updateRmg = asyncHandler(async (req, res, next) => {
   }
 });
 
+export const updateAdmin = asyncHandler(async (req, res, next) => {
+  try {
+    const adminId = req.params.id;
+    const updates = req.body;
+
+    const adminUser = await User.findOneAndUpdate(
+      { _id: adminId, role: 'Admin' },
+      updates,
+      { new: true }
+    ).select('-password');
+
+    if (!adminUser) {
+      return next(new ErrorResponse('Admin user not found', 404));
+    }
+
+    res.status(200).json({ success: true, message: 'Admin updated', data: adminUser });
+  }
+  catch (err) {
+    return next(new ErrorResponse(err.message || 'Failed to update Admin', 500));
+  }
+});
+
 export const deleteRmg = asyncHandler(async (req, res, next) => {
   try {
     const rmgId = req.params.id;
-    
+
     const rmgUser = await User.findOneAndDelete(
       { _id: rmgId, role: 'RMG' }
     );
-    
+
     if (!rmgUser) {
       return next(new ErrorResponse('RMG user not found', 404));
     }
-    
+
     res.status(200).json({ success: true, message: 'RMG deleted' });
   }
   catch (err) {
@@ -155,7 +177,7 @@ export const registerHR = asyncHandler(async (req, res, next) => {
   if (!name || !phone || !email || !company) {
     return next(new ErrorResponse('Please provide name, email and company', 400));
   }
- 
+
   const existing = await User.findOne({ email });
   if (existing) return next(new ErrorResponse('Email already registered', 400));
 
@@ -174,7 +196,7 @@ export const registerHR = asyncHandler(async (req, res, next) => {
   } catch (err) {
     return next(new ErrorResponse(err.message || 'Failed to create HR', 500));
   }
-}); 
+});
 
 /* Helper to build HTML credential email */
 const buildCredentialEmail = (name, number, email, password, role) => {
@@ -274,8 +296,8 @@ export const getAllHR = asyncHandler(async (req, res, next) => {
 export const getAllHrAccordingtoComapny = asyncHandler(async (req, res, next) => {
   try {
     const companyId = req.user.company;
-    console.log("comapny hard",companyId);
-    
+    console.log("comapny hard", companyId);
+
     const recruiters = await User.find({ role: { $in: ['HR'] }, company: companyId }).select('-password');
     res.status(200).json({ success: true, count: recruiters.length, data: recruiters });
   } catch (err) {
@@ -284,7 +306,7 @@ export const getAllHrAccordingtoComapny = asyncHandler(async (req, res, next) =>
 });
 
 export const getRecruiterById = asyncHandler(async (req, res, next) => {
-  try { 
+  try {
     const recruiterId = req.params.id;
     const recruiter = await User.findById(recruiterId).select('-password');
 
@@ -326,7 +348,7 @@ export const updateHR = asyncHandler(async (req, res, next) => {
       { _id: hrId, role: 'HR' },
       updates,
       { new: true }
-    ).select('-password'); 
+    ).select('-password');
     if (!hrUser) {
       return next(new ErrorResponse('HR user not found', 404));
     }
@@ -346,6 +368,6 @@ export const getHrCreatedByRmg = asyncHandler(async (req, res, next) => {
   } catch (err) {
     return next(new ErrorResponse(err.message || 'Failed to fetch HR users', 500));
   }
-});  
+});
 
 

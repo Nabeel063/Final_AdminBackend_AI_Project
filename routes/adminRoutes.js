@@ -1,6 +1,6 @@
 // routes/adminRoutes.js
 import express from 'express';
-import { registerRMG, registerHR } from '../controllers/adminController.js';
+import { registerRMG, registerHR, updateAdmin } from '../controllers/adminController.js';
 import { getAllRMG } from '../controllers/adminController.js';
 import { updateRmg } from '../controllers/adminController.js';
 import { deleteRmg,getAllHR,getRecruiterById,deleteHR,updateHR,getAllHrAccordingtoComapny  } from '../controllers/adminController.js';
@@ -23,6 +23,7 @@ router.get('/allhr', protect, getAllHR);
 router.get('/getallhr',protect, getAllHrAccordingtoComapny )
 router.get('/recruiter/:id', protect, getRecruiterById);
 router.put('/rmg/:id', protect, updateRmg);
+router.put('/admin/:id', protect, updateAdmin);
 router.put('/hr/:id', protect, updateHR);
 router.delete('/rmg/:id', protect, deleteRmg);
 router.delete('/hr/:id', protect, deleteHR);

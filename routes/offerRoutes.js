@@ -1,7 +1,7 @@
 import express from "express";
 import {protect} from "../middlewares/auth.js";
 import { authorize } from '../middlewares/roles.js';
-import {createOffer, getAllHr, getRmgOffersWithJDs, getAllOffers, assignOfferToHr, updateOffer, deleteOffer, getLatestFilteredUnfilteredCandidates, getAllFilteredUnfilteredCandidates, suggestSkills } from "../controllers/offerController.js";
+import {createOffer, getAllHr, getRmgOffersWithJDs, getAllOffers, assignOfferToHr, updateOffer, deleteOffer, getLatestFilteredUnfilteredCandidates, getAllFilteredUnfilteredCandidates, suggestSkills, updateRmgProfile } from "../controllers/offerController.js";
 
 const router = express.Router();
 
@@ -15,5 +15,6 @@ router.put("/:id/offer-update", protect, authorize("RMG"), updateOffer);
 router.delete("/:id", protect, authorize("RMG"), deleteOffer);
 router.get('/latest-candidates', protect, authorize('RMG','HR'), getLatestFilteredUnfilteredCandidates);
 router.get('/all-candidates-filtered', protect, authorize('RMG','HR'), getAllFilteredUnfilteredCandidates);
+router.put('/rmg/:id', protect, authorize('RMG'), updateRmgProfile);
 
 export default router;
